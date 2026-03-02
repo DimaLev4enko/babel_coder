@@ -10,7 +10,7 @@ const MAX_PAGE_SIZE: usize = 3000;
 
 fn main() {
     loop {
-        println!("\n=== BABEL ENGINE v3.0 ===");
+        println!("\n=== BABEL ENGINE v3.1 (True Babel Storage) ===");
         let options = vec![
             "📦 ТРАНСПОРТ (Открытый канал)",
             "🔐 КРИПТОГРАФИЯ (Шифрование)",
@@ -43,10 +43,16 @@ fn get_raw_data(msg: &str) -> Vec<u8> {
 }
 
 fn get_babel_string(msg: &str) -> String {
-    let mode = Select::new(msg, vec!["Вставить строку", "Прочитать из .babel"])
-        .prompt()
-        .unwrap();
-    let raw = if mode == "Вставить строку" {
+    let mode = Select::new(
+        msg,
+        vec![
+            "Вставить строку (Координаты/Колбаса)",
+            "Прочитать из .babel",
+        ],
+    )
+    .prompt()
+    .unwrap();
+    let raw = if mode.starts_with("Вставить") {
         Text::new("Ввод:").prompt().unwrap()
     } else {
         let path = Text::new("Путь:").prompt().unwrap();
@@ -55,7 +61,8 @@ fn get_babel_string(msg: &str) -> String {
     raw.lines()
         .map(|l| l.trim())
         .filter(|l| !l.starts_with('#') && !l.is_empty())
-        .collect()
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // === ПОТОКИ ===
@@ -82,8 +89,8 @@ fn crypto_flow() {
         let mode = Select::new(
             "Метод:",
             vec![
-                "1. SKEY (Надежно, ключ отдельно)",
-                "2. Маскировка (Ненадежно, ключ внутри - 'Всё в одном')",
+                "1. SKEY (Ссылки link[...])",
+                "2. Маскировка (Ключ внутри)",
                 "3. Свой пароль (Manual)",
             ],
         )
@@ -94,19 +101,19 @@ fn crypto_flow() {
             let (k, s) = generate_proportional_skey(data.len());
             handle_output_options(&xor_cipher(&data, &k), Some(s), false);
         } else if mode.starts_with('2') {
-            handle_output_options(&data, None, true); // Включаем режим маскировки
+            handle_output_options(&data, None, true);
         } else {
             let k = get_raw_data("Пароль/Маска:");
             handle_output_options(&xor_cipher(&data, &k), None, false);
         }
     } else {
-        let data_in = get_babel_string("Зашифрованные данные:");
+        let data_in = get_babel_string("Зашифрованные данные (Координаты):");
         let mode = Select::new(
             "Ключ:",
             vec![
-                "У меня есть SKEY",
+                "У меня есть SKEY (Ссылки)",
                 "Маскировка (Ключ внутри)",
-                "Свой пароль (Manual)",
+                "Свой пароль",
             ],
         )
         .prompt()
@@ -116,7 +123,7 @@ fn crypto_flow() {
             let skey = parse_skey(&get_babel_string("Введи SKEY:"));
             unpack_data(&data_in, Some(&skey), false)
         } else if mode.contains("Маскировка") {
-            unpack_data(&data_in, None, true) // Режим маскировки сам найдет ключ
+            unpack_data(&data_in, None, true)
         } else {
             let k = get_raw_data("Пароль/Маска:");
             unpack_data(&data_in, Some(&k), false)
@@ -126,9 +133,8 @@ fn crypto_flow() {
 }
 
 fn handle_output_options(data: &[u8], skey: Option<String>, is_masked: bool) {
-    // В режиме маскировки приклеиваем ключ к данным ПЕРЕД упаковкой
     let final_payload = if is_masked {
-        let mut masked = Uuid::new_v4().as_bytes().to_vec(); // 16 байт ключа
+        let mut masked = Uuid::new_v4().as_bytes().to_vec();
         let mut encrypted = xor_cipher(data, &masked);
         masked.append(&mut encrypted);
         masked
@@ -137,38 +143,37 @@ fn handle_output_options(data: &[u8], skey: Option<String>, is_masked: bool) {
     };
 
     if let Some(s) = skey {
-        println!("\n🔑 SKEY:\n{}", s);
+        println!("\n🔑 SKEY (Ссылки):\n{}", s);
     }
 
     let opt = Select::new(
         "\nВывод ДАННЫХ:",
         vec![
-            "1. .babel файл",
-            "2. Колбаса (Терминал)",
-            "3. Локальный HEX",
+            "1. .babel файл (Полные координаты: стена:полка:том:стр:ОГРОМНЫЙ_ХЕКС)",
+            "2. Терминал (Старая колбаса key...val...q)",
         ],
     )
     .prompt()
     .unwrap();
+
+    println!("🌐 Заливаю данные в Вавилон...");
+    let (sausages, coords) = pack_to_babel(&final_payload);
 
     if opt.starts_with('1') {
         let path = Text::new("Имя:")
             .with_default("out.babel")
             .prompt()
             .unwrap();
-        let content = if opt.contains("HEX") {
-            hex::encode(&final_payload)
-        } else {
-            pack_chunks_to_babel(&final_payload).join("_")
-        };
-        fs::write(path, format!("# Babel v3.0 Data\n{}", content)).unwrap();
-    } else if opt.starts_with('2') {
-        println!(
-            "\n📦 РЕЗУЛЬТАТ:\n{}",
-            pack_chunks_to_babel(&final_payload).join("_")
-        );
+        let content = coords.join("\n");
+        // СОХРАНЯЕМ ИСТИННЫЕ КООРДИНАТЫ ВМЕСТО КОМПЬЮТЕРНОГО ХЕКСА
+        fs::write(
+            &path,
+            format!("# Babel Data Storage Coordinates\n{}", content),
+        )
+        .unwrap();
+        println!("✅ Истинные координаты сохранены в {}", path);
     } else {
-        println!("\n📦 HEX:\n{}", hex::encode(&final_payload));
+        println!("\n📦 РЕЗУЛЬТАТ (Колбаса):\n{}", sausages.join("_"));
     }
 }
 
@@ -191,43 +196,80 @@ fn xor_cipher(data: &[u8], key: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-fn pack_chunks_to_babel(data: &[u8]) -> Vec<String> {
+// ИСТИННАЯ ЗАЛИВКА В ВАВИЛОН (ВОЗВРАЩАЕТ И КОЛБАСУ И КООРДИНАТЫ)
+fn pack_to_babel(data: &[u8]) -> (Vec<String>, Vec<String>) {
     let hex_data = hex_to_babel(&hex::encode(data));
     let client = reqwest::blocking::Client::new();
-    hex_data
+    let mut sausages = Vec::new();
+    let mut coordinates = Vec::new();
+
+    for (i, chunk) in hex_data
         .chars()
         .collect::<Vec<_>>()
         .chunks(MAX_PAGE_SIZE - 50)
         .enumerate()
-        .map(|(i, chunk)| {
-            let chunk_str: String = chunk.iter().collect();
-            loop {
-                let id = &hex_to_babel(&Uuid::new_v4().simple().to_string())[..20];
-                let q = format!("key{}val{}q", id, chunk_str);
-                print!("🔄 Чанк {}... ", i + 1);
-                io::stdout().flush().unwrap();
-                if verify(&client, &q) {
+    {
+        let chunk_str: String = chunk.iter().collect();
+        loop {
+            let id = &hex_to_babel(&Uuid::new_v4().simple().to_string())[..20];
+            let q = format!("key{}val{}q", id, chunk_str);
+            print!("🔄 Чанк {}... ", i + 1);
+            io::stdout().flush().unwrap();
+
+            let res = client
+                .post(SEARCH_URL)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .body(format!("find={}", q))
+                .send()
+                .and_then(|r| r.text())
+                .unwrap_or_default();
+            if let Some(coords) = parse_oc(&res) {
+                if fetch_page(&coords).contains(&q) {
                     println!("✅");
-                    return q;
+                    sausages.push(q);
+                    coordinates.push(coords); // Сохраняем стену:полку:том:страницу:огромный_хекс
+                    break;
                 }
-                println!("⚠️");
             }
-        })
-        .collect()
+            println!("⚠️");
+        }
+    }
+    (sausages, coordinates)
 }
 
 fn unpack_data(input: &str, external_key: Option<&[u8]>, is_masked: bool) -> Vec<u8> {
     let mut full_hex = String::new();
-    for part in input.split('_') {
-        if let Some(v) = part.find("val") {
-            let sub = &part[v + 3..];
-            if let Some(q) = sub.find('q') {
-                full_hex.push_str(&babel_to_hex(&sub[..q]));
+
+    // Если есть двоеточия, значит это полные координаты из .babel файла
+    if input.contains(':') && input.lines().any(|l| l.split(':').count() >= 5) {
+        println!("🌐 Тяну данные по координатам из хранилища Вавилона...");
+        for line in input.lines() {
+            let coords = line.trim();
+            if coords.starts_with('#') || coords.is_empty() {
+                continue;
             }
-        } else {
-            full_hex.push_str(part);
+            let page_text = fetch_page(coords);
+            if let Some(v) = page_text.find("val") {
+                let sub = &page_text[v + 3..];
+                if let Some(q) = sub.find('q') {
+                    full_hex.push_str(&babel_to_hex(&sub[..q]));
+                }
+            }
+        }
+    } else {
+        // Старая колбаса (ввод из терминала)
+        for part in input.split('_') {
+            if let Some(v) = part.find("val") {
+                let sub = &part[v + 3..];
+                if let Some(q) = sub.find('q') {
+                    full_hex.push_str(&babel_to_hex(&sub[..q]));
+                }
+            } else {
+                full_hex.push_str(part);
+            }
         }
     }
+
     let mut bytes = hex::decode(full_hex.trim()).unwrap_or_default();
 
     if is_masked && bytes.len() > 16 {
@@ -240,6 +282,7 @@ fn unpack_data(input: &str, external_key: Option<&[u8]>, is_masked: bool) -> Vec
     }
 }
 
+// SKEY ссылками
 fn generate_proportional_skey(len: usize) -> (Vec<u8>, String) {
     let mut noise = Vec::new();
     let mut links = String::new();
@@ -274,21 +317,6 @@ fn parse_skey(input: &str) -> Vec<u8> {
         input.as_bytes().to_vec()
     } else {
         n
-    }
-}
-
-fn verify(client: &reqwest::blocking::Client, q: &str) -> bool {
-    let res = client
-        .post(SEARCH_URL)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body(format!("find={}", q))
-        .send()
-        .and_then(|r| r.text())
-        .unwrap_or_default();
-    if let Some(c) = parse_oc(&res) {
-        fetch_page(&c).contains(q)
-    } else {
-        false
     }
 }
 
@@ -331,7 +359,7 @@ fn parse_oc(h: &str) -> Option<String> {
                 .replace("'", "")
                 .replace(" ", "");
             let p: Vec<&str> = oc.split(',').collect();
-            Some(format!("{}:{}:{}:{}:{}", p[1], p[2], p[3], p[4], p[0]))
+            Some(format!("{}:{}:{}:{}:{}", p[1], p[2], p[3], p[4], p[0])) // wall:shelf:vol:page:huge_hex
         })
 }
 
